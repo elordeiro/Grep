@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"unicode"
 )
 
 /*
@@ -51,6 +52,10 @@ func matchLine(line []byte, pattern string) (bool, error) {
 	switch pattern {
 	case "\\d":
 		ok = bytes.ContainsAny(line, "1234567890")
+	case "\\w":
+		ok = bytes.ContainsFunc(line, func(r rune) bool {
+			return unicode.IsDigit(r) || unicode.IsLetter(r) || r == rune('_')
+		})
 	default:
 		ok = bytes.ContainsAny(line, pattern)
 	}

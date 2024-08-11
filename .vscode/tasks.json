@@ -4,7 +4,7 @@
         {
             "label": "Echo Input",
             "type": "shell",
-            "command": "cd cmd/mygrep && echo -n 'apple' | dlv debug --headless --listen=:2345 --api-version=2 --accept-multiclient -- -E \"\\d\"",
+            "command": "cd cmd/mygrep && echo -n 'apple' | dlv debug --headless --listen=:2345 --api-version=2 --accept-multiclient -- -E \"\\w\"",
             "problemMatcher": [],
             "isBackground": true,
             "presentation": {
