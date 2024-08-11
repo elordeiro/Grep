@@ -14,6 +14,7 @@ const (
 	CARET         = '^'
 	DOLLAR_SIGN   = '$'
 	PLUS          = '+'
+	QUESTION      = '?'
 	BACKSLASH     = '\\'
 )
 
@@ -79,13 +80,14 @@ func (s *Scanner) scanToken() {
 		s.mustBeEnd()
 	case PLUS:
 		s.matchAtleastOne(prev)
+	case QUESTION:
+		s.ok = true
 	default:
 		s.matchChar(c)
 	}
 
-	if next := s.peekRegex(); next == DOLLAR_SIGN {
-		s.scanToken()
-	}
+	s.lookForEOSAnchor()
+	s.lookForOptional()
 
 	if s.ok {
 		s.mustMatch = true
@@ -203,6 +205,28 @@ func (s *Scanner) mustBeEnd() {
 
 // ----------------------------------------------------------------------------
 
+// Look aheads ----------------------------------------------------------------
+func (s *Scanner) lookForEOSAnchor() {
+	next := s.peekRegex()
+	if next == DOLLAR_SIGN {
+		s.scanToken()
+	}
+}
+
+func (s *Scanner) lookForOptional() {
+	next := s.peekNextRegex()
+	if next == QUESTION {
+		if s.ok {
+			if s.peekLine() == s.peekRegex() {
+				s.nextLineChar()
+			}
+			s.nextToken()
+		}
+	}
+}
+
+// ----------------------------------------------------------------------------
+
 // Match helpers --------------------------------------------------------------
 func (s *Scanner) seekInRegex(expected byte) []byte {
 	group := make([]byte, 0)
@@ -235,6 +259,13 @@ func (s *Scanner) peekRegex() byte {
 		return '\000'
 	}
 	return s.regex[s.regexCurrent]
+}
+
+func (s *Scanner) peekNextRegex() byte {
+	if s.regexCurrent+1 >= len(s.regex) {
+		return '\000'
+	}
+	return s.regex[s.regexCurrent+1]
 }
 
 func (s *Scanner) peekLine() byte {
