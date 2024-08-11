@@ -50,8 +50,8 @@ func matchLine(line []byte, pattern string) (bool, error) {
 		return false, fmt.Errorf("unsupported pattern: %q", pattern)
 	}
 
-	for _, c := range line {
-		ok, restOfPattern, err := matchRune(rune(c), pattern)
+	for i, c := range line {
+		ok, restOfPattern, err := matchRune(rune(c), i, line[i:], pattern)
 		pattern = restOfPattern
 		if err != nil {
 			return false, err
@@ -64,7 +64,7 @@ func matchLine(line []byte, pattern string) (bool, error) {
 	return false, nil
 }
 
-func matchRune(r rune, pattern string) (bool, string, error) {
+func matchRune(r rune, rIdx int, line []byte, pattern string) (bool, string, error) {
 	var ok bool
 	var patIdx int
 
@@ -84,6 +84,7 @@ func matchRune(r rune, pattern string) (bool, string, error) {
 			ok = unicode.IsDigit(r) || unicode.IsLetter(r) || r == rune('_')
 		}
 
+	// Include or exclude a range of characters
 	case '[':
 		patIdx++
 		endIdx := strings.Index(pattern, "]")
@@ -114,6 +115,17 @@ func matchRune(r rune, pattern string) (bool, string, error) {
 			}
 		}
 
+	// Start of line anchor
+	case '^':
+		if rIdx != 0 {
+			ok = false
+			patIdx = len(pattern)
+		} else {
+			patIdx++
+			ok = r == rune(pattern[patIdx])
+			patIdx++
+		}
+	// Match a specific character
 	default:
 		ok = r == rune(pattern[patIdx])
 		patIdx++
