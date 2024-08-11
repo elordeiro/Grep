@@ -1,20 +1,23 @@
 package main
 
 import (
-	// Uncomment this to pass the first stage
-	// "bytes"
 	"bytes"
 	"fmt"
 	"io"
 	"os"
-	"unicode/utf8"
 )
 
-// Usage: echo <input_text> | your_program.sh -E <pattern>
+/*
+Usage: echo <input_text> | your_program.sh -E <pattern>
+Exit codes:
+
+	0 means success
+	1 means no lines were selected, >1 means error
+*/
 func main() {
 	if len(os.Args) < 3 || os.Args[1] != "-E" {
 		fmt.Fprintf(os.Stderr, "usage: mygrep -E <pattern>\n")
-		os.Exit(2) // 1 means no lines were selected, >1 means error
+		os.Exit(2)
 	}
 
 	pattern := os.Args[2]
@@ -32,18 +35,25 @@ func main() {
 	}
 
 	if !ok {
+		fmt.Println("not found")
 		os.Exit(1)
 	}
 
-	// default exit code is 0 which means success
+	fmt.Println("found")
 }
 
 func matchLine(line []byte, pattern string) (bool, error) {
-	if utf8.RuneCountInString(pattern) != 1 {
-		return false, fmt.Errorf("unsupported pattern: %q", pattern)
-	}
+	// if utf8.RuneCountInString(pattern) != 1 {
+	// 	return false, fmt.Errorf("unsupported pattern: %q", pattern)
+	// }
 
-	ok := bytes.ContainsAny(line, pattern)
+	var ok bool
+	switch pattern {
+	case "\\d":
+		ok = bytes.ContainsAny(line, "1234567890")
+	default:
+		ok = bytes.ContainsAny(line, pattern)
+	}
 
 	return ok, nil
 }
