@@ -1,12 +1,10 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
-	"strings"
-	"unicode"
+
 	"unicode/utf8"
 )
 
@@ -50,90 +48,9 @@ func matchLine(line []byte, pattern string) (bool, error) {
 		return false, fmt.Errorf("unsupported pattern: %q", pattern)
 	}
 
-	for i, c := range line {
-		ok, restOfPattern, err := matchRune(rune(c), i, line[i:], pattern)
-		pattern = restOfPattern
-		if err != nil {
-			return false, err
-		}
+	scanner := NewScanner(string(line), pattern)
 
-		if ok && pattern == "" {
-			return true, nil
-		}
-	}
-	return false, nil
-}
+	scanner.ScanTokens()
 
-func matchRune(r rune, rIdx int, line []byte, pattern string) (bool, string, error) {
-	var ok bool
-	var patIdx int
-
-	switch pattern[patIdx] {
-
-	// Match single digit or letter
-	case '\\':
-		patIdx++
-		switch pattern[patIdx] {
-		// Match single digit
-		case 'd':
-			patIdx++
-			ok = unicode.IsDigit(r)
-			// Match single letter
-		case 'w':
-			patIdx++
-			ok = unicode.IsDigit(r) || unicode.IsLetter(r) || r == rune('_')
-		}
-
-	// Include or exclude a range of characters
-	case '[':
-		patIdx++
-		endIdx := strings.Index(pattern, "]")
-		if endIdx == -1 {
-			return false, "", errors.New("missing closing bracket")
-		}
-
-		include := true
-		insideExpr := pattern[patIdx:endIdx]
-		patIdx = endIdx + 1
-
-		if insideExpr[0] == '^' {
-			include = false
-			insideExpr = insideExpr[1:]
-		}
-
-		for _, w := range insideExpr {
-			if include {
-				ok = r == w
-				if ok {
-					break
-				}
-			} else {
-				ok = r != w
-				if !ok {
-					break
-				}
-			}
-		}
-
-	// Start of line anchor
-	case '^':
-		if rIdx != 0 {
-			ok = false
-			patIdx = len(pattern)
-		} else {
-			patIdx++
-			ok = r == rune(pattern[patIdx])
-			patIdx++
-		}
-	// Match a specific character
-	default:
-		ok = r == rune(pattern[patIdx])
-		patIdx++
-	}
-
-	if ok {
-		pattern = pattern[patIdx:]
-	}
-
-	return ok, pattern, nil
+	return scanner.ok, scanner.err
 }
