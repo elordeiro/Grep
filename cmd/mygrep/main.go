@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -51,27 +50,78 @@ func matchLine(line []byte, pattern string) (bool, error) {
 		return false, fmt.Errorf("unsupported pattern: %q", pattern)
 	}
 
+	for _, c := range line {
+		ok, restOfPattern, err := matchRune(rune(c), pattern)
+		pattern = restOfPattern
+		if err != nil {
+			return false, err
+		}
+
+		if ok && pattern == "" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func matchRune(r rune, pattern string) (bool, string, error) {
 	var ok bool
-	switch {
-	case pattern == "\\d":
-		ok = bytes.ContainsAny(line, "1234567890")
-	case pattern == "\\w":
-		ok = bytes.ContainsFunc(line, func(r rune) bool {
-			return unicode.IsDigit(r) || unicode.IsLetter(r) || r == rune('_')
-		})
-	case pattern[0] == '[':
+	var patIdx int
+
+	switch pattern[patIdx] {
+
+	// Match single digit or letter
+	case '\\':
+		patIdx++
+		switch pattern[patIdx] {
+		// Match single digit
+		case 'd':
+			patIdx++
+			ok = unicode.IsDigit(r)
+			// Match single letter
+		case 'w':
+			patIdx++
+			ok = unicode.IsDigit(r) || unicode.IsLetter(r) || r == rune('_')
+		}
+
+	case '[':
+		patIdx++
 		endIdx := strings.Index(pattern, "]")
 		if endIdx == -1 {
-			return false, errors.New("missing closing bracket")
+			return false, "", errors.New("missing closing bracket")
 		}
-		if pattern[1] == '^' {
-			ok = !bytes.ContainsAny(line, pattern[1:len(pattern)-1])
-		} else {
-			ok = bytes.ContainsAny(line, pattern[1:len(pattern)-1])
+
+		include := true
+		insideExpr := pattern[patIdx:endIdx]
+		patIdx = endIdx + 1
+
+		if insideExpr[0] == '^' {
+			include = false
+			insideExpr = insideExpr[1:]
 		}
+
+		for _, w := range insideExpr {
+			if include {
+				ok = r == w
+				if ok {
+					break
+				}
+			} else {
+				ok = r != w
+				if !ok {
+					break
+				}
+			}
+		}
+
 	default:
-		ok = bytes.ContainsAny(line, pattern)
+		ok = r == rune(pattern[patIdx])
+		patIdx++
 	}
 
-	return ok, nil
+	if ok {
+		pattern = pattern[patIdx:]
+	}
+
+	return ok, pattern, nil
 }
