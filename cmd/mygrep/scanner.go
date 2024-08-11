@@ -15,6 +15,7 @@ const (
 	DOLLAR_SIGN   = '$'
 	PLUS          = '+'
 	QUESTION      = '?'
+	DOT           = '.'
 	BACKSLASH     = '\\'
 )
 
@@ -82,6 +83,8 @@ func (s *Scanner) scanToken() {
 		s.matchAtleastOne(prev)
 	case QUESTION:
 		s.ok = true
+	case DOT:
+		s.matchAny()
 	default:
 		s.matchChar(c)
 	}
@@ -103,11 +106,11 @@ func (s *Scanner) matchNum() {
 			s.ok = true
 			break
 		}
-		if s.mustMatch {
-			break
-		}
 		if s.startAnchor {
 			s.done = true
+			break
+		}
+		if s.mustMatch {
 			break
 		}
 	}
@@ -119,11 +122,11 @@ func (s *Scanner) matchChar(expected byte) {
 			s.ok = true
 			break
 		}
-		if s.mustMatch {
-			break
-		}
 		if s.startAnchor {
 			s.done = true
+			break
+		}
+		if s.mustMatch {
 			break
 		}
 	}
@@ -135,11 +138,11 @@ func (s *Scanner) matchAlphaNum() {
 			s.ok = true
 			break
 		}
-		if s.mustMatch {
-			break
-		}
 		if s.startAnchor {
 			s.done = true
+			break
+		}
+		if s.mustMatch {
 			break
 		}
 	}
@@ -150,6 +153,13 @@ func (s *Scanner) matchAtleastOne(prev byte) {
 	for !s.isAtLineEnd() && s.peekLine() == prev {
 		s.nextLineChar()
 	}
+}
+
+func (s *Scanner) matchAny() {
+	if !s.isAtLineEnd() {
+		s.nextLineChar()
+	}
+	s.ok = s.mustMatch
 }
 
 func (s *Scanner) matchCharGroup() {
