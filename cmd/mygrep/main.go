@@ -2,10 +2,13 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 /*
@@ -44,18 +47,24 @@ func main() {
 }
 
 func matchLine(line []byte, pattern string) (bool, error) {
-	// if utf8.RuneCountInString(pattern) != 1 {
-	// 	return false, fmt.Errorf("unsupported pattern: %q", pattern)
-	// }
+	if utf8.RuneCountInString(pattern) < 1 {
+		return false, fmt.Errorf("unsupported pattern: %q", pattern)
+	}
 
 	var ok bool
-	switch pattern {
-	case "\\d":
+	switch {
+	case pattern == "\\d":
 		ok = bytes.ContainsAny(line, "1234567890")
-	case "\\w":
+	case pattern == "\\w":
 		ok = bytes.ContainsFunc(line, func(r rune) bool {
 			return unicode.IsDigit(r) || unicode.IsLetter(r) || r == rune('_')
 		})
+	case pattern[0] == '[':
+		endIdx := strings.Index(pattern, "]")
+		if endIdx == -1 {
+			return false, errors.New("missing closing bracket")
+		}
+		ok = bytes.ContainsAny(line, pattern[1:len(pattern)-1])
 	default:
 		ok = bytes.ContainsAny(line, pattern)
 	}
