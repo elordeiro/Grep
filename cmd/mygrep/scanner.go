@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 )
 
 const (
@@ -11,6 +12,8 @@ const (
 	LOWER_CASE_W  = 'w'
 	OPEN_BRACKET  = '['
 	CLOSE_BRACKET = ']'
+	OPEN_PAREN    = '('
+	CLOSE_PAREN   = ')'
 	CARET         = '^'
 	DOLLAR_SIGN   = '$'
 	PLUS          = '+'
@@ -75,6 +78,7 @@ func (s *Scanner) scanToken() {
 		s.matchCharGroup()
 	case CLOSE_BRACKET:
 		s.nextToken()
+		return
 	case CARET:
 		s.mustBeStart()
 	case DOLLAR_SIGN:
@@ -85,6 +89,11 @@ func (s *Scanner) scanToken() {
 		s.ok = true
 	case DOT:
 		s.matchAny()
+	case OPEN_PAREN:
+		s.matchExprGroup()
+	case CLOSE_PAREN:
+		s.nextToken()
+		return
 	default:
 		s.matchChar(c)
 	}
@@ -200,6 +209,22 @@ func (s *Scanner) positiveCharGroup(group []byte) {
 	}
 }
 
+func (s *Scanner) matchExprGroup() {
+	group := s.seekInRegex(')')
+	exprs := strings.Split(string(group), "|")
+	newLine := s.line[s.lineCurrent:]
+
+	for _, expr := range exprs {
+		newScanner := NewScanner(newLine, expr)
+		newScanner.ScanTokens()
+		if newScanner.ok && newScanner.err == nil {
+			s.ok = true
+			s.lineCurrent += newScanner.lineCurrent
+			break
+		}
+	}
+}
+
 func (s *Scanner) mustBeStart() {
 	s.ok = s.lineCurrent == 0
 	s.startAnchor = true
@@ -211,6 +236,11 @@ func (s *Scanner) mustBeStart() {
 func (s *Scanner) mustBeEnd() {
 	s.ok = s.ok && s.isAtLineEnd()
 	s.done = true
+	if !s.isAtRegexEnd() {
+		s.ok = false
+		s.hasError = true
+		s.err = errors.New("regex not terminated by $")
+	}
 }
 
 // ----------------------------------------------------------------------------
