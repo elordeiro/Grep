@@ -64,7 +64,11 @@ func matchLine(line []byte, pattern string) (bool, error) {
 		if endIdx == -1 {
 			return false, errors.New("missing closing bracket")
 		}
-		ok = bytes.ContainsAny(line, pattern[1:len(pattern)-1])
+		if pattern[1] == '^' {
+			ok = !bytes.ContainsAny(line, pattern[1:len(pattern)-1])
+		} else {
+			ok = bytes.ContainsAny(line, pattern[1:len(pattern)-1])
+		}
 	default:
 		ok = bytes.ContainsAny(line, pattern)
 	}
