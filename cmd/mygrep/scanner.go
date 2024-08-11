@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"os"
 	"slices"
 )
 
@@ -14,6 +13,7 @@ const (
 	CLOSE_BRACKET = ']'
 	CARET         = '^'
 	DOLLAR_SIGN   = '$'
+	PLUS          = '+'
 	BACKSLASH     = '\\'
 )
 
@@ -30,6 +30,7 @@ type Scanner struct {
 	hasError    bool
 	isEscaping  bool
 	startAnchor bool
+	mustMatch   bool
 }
 
 func NewScanner(line, regex string) *Scanner {
@@ -48,6 +49,7 @@ func (s *Scanner) ScanTokens() {
 }
 
 func (s *Scanner) scanToken() {
+	prev := s.prevToken()
 	c := s.nextToken()
 
 	switch c {
@@ -58,14 +60,14 @@ func (s *Scanner) scanToken() {
 			s.isEscaping = false
 			s.matchNum()
 		} else {
-			s.matchAlpha(c)
+			s.matchChar(c)
 		}
 	case LOWER_CASE_W:
 		if s.isEscaping {
 			s.isEscaping = false
 			s.matchAlphaNum()
 		} else {
-			s.matchAlpha(c)
+			s.matchChar(c)
 		}
 	case OPEN_BRACKET:
 		s.matchCharGroup()
@@ -75,12 +77,20 @@ func (s *Scanner) scanToken() {
 		s.mustBeStart()
 	case DOLLAR_SIGN:
 		s.mustBeEnd()
+	case PLUS:
+		s.matchAtleastOne(prev)
 	default:
-		s.matchAlpha(c)
+		s.matchChar(c)
 	}
 
-	if next := s.peek(); next == DOLLAR_SIGN {
+	if next := s.peekRegex(); next == DOLLAR_SIGN {
 		s.scanToken()
+	}
+
+	if s.ok {
+		s.mustMatch = true
+	} else if s.mustMatch {
+		s.resetRegex()
 	}
 }
 
@@ -91,13 +101,23 @@ func (s *Scanner) matchNum() {
 			s.ok = true
 			break
 		}
+		if s.mustMatch {
+			break
+		}
+		if s.startAnchor {
+			s.done = true
+			break
+		}
 	}
 }
 
-func (s *Scanner) matchAlpha(expected byte) {
+func (s *Scanner) matchChar(expected byte) {
 	for !s.isAtLineEnd() {
 		if c := s.nextLineChar(); c == expected {
 			s.ok = true
+			break
+		}
+		if s.mustMatch {
 			break
 		}
 		if s.startAnchor {
@@ -113,6 +133,20 @@ func (s *Scanner) matchAlphaNum() {
 			s.ok = true
 			break
 		}
+		if s.mustMatch {
+			break
+		}
+		if s.startAnchor {
+			s.done = true
+			break
+		}
+	}
+}
+
+func (s *Scanner) matchAtleastOne(prev byte) {
+	s.ok = true
+	for !s.isAtLineEnd() && s.peekLine() == prev {
+		s.nextLineChar()
 	}
 }
 
@@ -122,13 +156,12 @@ func (s *Scanner) matchCharGroup() {
 		s.err = errors.New("unexpected end of regex")
 	}
 
-	c := s.peek()
+	c := s.peekRegex()
+	group := s.seekInRegex(CLOSE_BRACKET)
+
 	if c == CARET {
-		s.nextToken()
-		group := s.seek(CLOSE_BRACKET)
-		s.negativeCharGroup(group)
+		s.negativeCharGroup(group[1:])
 	} else {
-		group := s.seek(CLOSE_BRACKET)
 		s.positiveCharGroup(group)
 	}
 }
@@ -157,10 +190,10 @@ func (s *Scanner) positiveCharGroup(group []byte) {
 
 func (s *Scanner) mustBeStart() {
 	s.ok = s.lineCurrent == 0
+	s.startAnchor = true
 	if !s.ok {
 		s.done = true
 	}
-	s.startAnchor = true
 }
 
 func (s *Scanner) mustBeEnd() {
@@ -171,12 +204,13 @@ func (s *Scanner) mustBeEnd() {
 // ----------------------------------------------------------------------------
 
 // Match helpers --------------------------------------------------------------
-func (s *Scanner) seek(expected byte) []byte {
+func (s *Scanner) seekInRegex(expected byte) []byte {
 	group := make([]byte, 0)
 	for {
-		if s.isAtLineEnd() {
+		if s.isAtRegexEnd() {
 			s.hasError = true
-			fmt.Fprintf(os.Stderr, "unexpected line end, expected %v ", expected)
+			str := fmt.Sprintf("unexpected end of regex, expected %v ", expected)
+			s.err = errors.New(str)
 		}
 		c := s.nextToken()
 		if c == expected {
@@ -187,10 +221,37 @@ func (s *Scanner) seek(expected byte) []byte {
 	return group
 }
 
-func (s *Scanner) peek() byte {
-	if s.isAtEnd() {
+func (s *Scanner) resetRegex() {
+	if s.isEscaping || s.startAnchor {
+		return
+	}
+	s.lineCurrent--
+	s.regexCurrent = 0
+	s.mustMatch = false
+}
+
+func (s *Scanner) peekRegex() byte {
+	if s.isAtRegexEnd() {
 		return '\000'
 	}
+	return s.regex[s.regexCurrent]
+}
+
+func (s *Scanner) peekLine() byte {
+	if s.isAtLineEnd() {
+		return '\000'
+	}
+	return s.line[s.lineCurrent]
+}
+
+func (s *Scanner) prevToken() byte {
+	if s.regexCurrent == 0 {
+		return '\000'
+	}
+	return s.regex[s.regexCurrent-1]
+}
+
+func (s *Scanner) currentToken() byte {
 	return s.regex[s.regexCurrent]
 }
 
@@ -206,6 +267,7 @@ func (s *Scanner) nextLineChar() byte {
 
 func (s *Scanner) isAtEnd() bool {
 	return s.regexCurrent >= len(s.regex) ||
+		s.lineCurrent >= len(s.line) ||
 		s.done ||
 		s.hasError
 }
