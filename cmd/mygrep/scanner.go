@@ -2,136 +2,98 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"slices"
-	"strings"
-)
-
-const (
-	LOWER_CASE_D  = 'd'
-	LOWER_CASE_W  = 'w'
-	OPEN_BRACKET  = '['
-	CLOSE_BRACKET = ']'
-	OPEN_PAREN    = '('
-	CLOSE_PAREN   = ')'
-	CARET         = '^'
-	DOLLAR_SIGN   = '$'
-	PLUS          = '+'
-	QUESTION      = '?'
-	DOT           = '.'
-	BACKSLASH     = '\\'
 )
 
 type Scanner struct {
-	line         string
-	regex        string
-	lineCurrent  int
-	regexCurrent int
-	err          error
+	tokenizer   *Tokenizer
+	prevToken   *Token
+	line        string
+	lineCurrent int
+	err         error
+	backRefs    []string
 
 	// flags
-	ok          bool
-	done        bool
-	hasError    bool
-	isEscaping  bool
-	startAnchor bool
-	mustMatch   bool
+	ok           bool
+	done         bool
+	hasError     bool
+	hasSOSAnchor bool // has start of string anchor
+	mustMatch    bool
 }
 
 func NewScanner(line, regex string) *Scanner {
 	return &Scanner{
-		line:  line,
-		regex: regex,
+		line:      line,
+		tokenizer: NewTokenizer(regex),
 	}
 }
 
+// Scanner --------------------------------------------------------------------
 func (s *Scanner) ScanTokens() {
+	if !s.tokenizerOk() {
+		return
+	}
+
 	for !s.isAtEnd() {
 		s.ok = false
-		s.scanToken()
+
+		token := s.tokenizer.NextToken()
+		s.scanToken(token)
+
+		if s.ok {
+			s.mustMatch = true
+		} else if s.mustMatch {
+			s.resetRegex()
+		}
+
+		s.prevToken = token
+		s.lookForEOSAnchor()
+		s.lookForOptional()
 	}
-	s.ok = s.ok && s.isAtRegexEnd()
+	s.ok = s.ok && s.tokenizer.isAtEnd()
 }
 
-func (s *Scanner) scanToken() {
-	prev := s.prevToken()
-	c := s.nextToken()
+func (s *Scanner) scanToken(token *Token) {
 
-	switch c {
-	case BACKSLASH:
-		s.isEscaping = true
-	case LOWER_CASE_D:
-		if s.isEscaping {
-			s.isEscaping = false
-			s.matchNum()
-		} else {
-			s.matchChar(c)
-		}
-	case LOWER_CASE_W:
-		if s.isEscaping {
-			s.isEscaping = false
-			s.matchAlphaNum()
-		} else {
-			s.matchChar(c)
-		}
-	case OPEN_BRACKET:
-		s.matchCharGroup()
-	case CLOSE_BRACKET:
-		s.nextToken()
-		return
-	case CARET:
+	switch token.typ {
+	case DIGIT:
+		s.matchDigit()
+	case ALPHA_NUM:
+		s.matchAlphaNum()
+	case CHAR_LITERAL:
+		s.matchCharLiteral(token.literal.(byte))
+	case POSITIVE_GROUP:
+		s.matchPositiveGroup(token.literal.([]byte))
+	case NEGATIVE_GROUP:
+		s.matchNegativeGroup(token.literal.([]byte))
+	case EXPR_GROUP:
+		s.matchExprGroup(token.literal.([]string))
+	case SOS_ANCHOR:
 		s.mustBeStart()
-	case DOLLAR_SIGN:
-		s.mustBeEnd()
-	case PLUS:
-		s.matchAtleastOne(prev)
-	case QUESTION:
-		s.ok = true
-	case DOT:
-		s.matchAny()
-	case OPEN_PAREN:
-		s.matchExprGroup()
-	case CLOSE_PAREN:
-		s.nextToken()
+	case EOS_ANCHOR:
+		s.ok = false
+		s.done = true
+	case ONE_OR_MORE:
+		s.matchOneOrMore()
+	case OPTIONAL:
 		return
-	default:
-		s.matchChar(c)
-	}
-
-	s.lookForEOSAnchor()
-	s.lookForOptional()
-
-	if s.ok {
-		s.mustMatch = true
-	} else if s.mustMatch {
-		s.resetRegex()
+	case ANY:
+		s.matchAny()
+	case BACK_REF:
+		s.matchBackRef(token.literal.(int))
 	}
 }
 
-// Matchers -------------------------------------------------------------------
-func (s *Scanner) matchNum() {
-	for !s.isAtLineEnd() {
-		if isDigit(s.nextLineChar()) {
-			s.ok = true
-			break
-		}
-		if s.startAnchor {
-			s.done = true
-			break
-		}
-		if s.mustMatch {
-			break
-		}
-	}
-}
+// ----------------------------------------------------------------------------
 
-func (s *Scanner) matchChar(expected byte) {
+// Asserters ------------------------------------------------------------------
+func (s *Scanner) matchDigit() {
 	for !s.isAtLineEnd() {
-		if c := s.nextLineChar(); c == expected {
+		if isDigit(s.next()) {
 			s.ok = true
 			break
 		}
-		if s.startAnchor {
+		if s.hasSOSAnchor {
 			s.done = true
 			break
 		}
@@ -143,11 +105,11 @@ func (s *Scanner) matchChar(expected byte) {
 
 func (s *Scanner) matchAlphaNum() {
 	for !s.isAtLineEnd() {
-		if isAlphaNumeric(s.nextLineChar()) {
+		if isAlphaNumeric(s.next()) {
 			s.ok = true
 			break
 		}
-		if s.startAnchor {
+		if s.hasSOSAnchor {
 			s.done = true
 			break
 		}
@@ -157,77 +119,80 @@ func (s *Scanner) matchAlphaNum() {
 	}
 }
 
-func (s *Scanner) matchAtleastOne(prev byte) {
-	s.ok = true
-	for !s.isAtLineEnd() && s.peekLine() == prev {
-		s.nextLineChar()
-	}
-}
-
-func (s *Scanner) matchAny() {
-	if !s.isAtLineEnd() {
-		s.nextLineChar()
-	}
-	s.ok = s.mustMatch
-}
-
-func (s *Scanner) matchCharGroup() {
-	if s.isAtLineEnd() {
-		s.hasError = true
-		s.err = errors.New("unexpected end of regex")
-	}
-
-	c := s.peekRegex()
-	group := s.seekInRegex(CLOSE_BRACKET)
-
-	if c == CARET {
-		s.negativeCharGroup(group[1:])
-	} else {
-		s.positiveCharGroup(group)
-	}
-}
-
-func (s *Scanner) negativeCharGroup(group []byte) {
-	s.ok = true
+func (s *Scanner) matchCharLiteral(expected byte) {
 	for !s.isAtLineEnd() {
-		c := s.nextLineChar()
-		if slices.Contains(group, c) {
-			s.ok = false
+		if c := s.next(); c == expected {
+			s.ok = true
+			break
+		}
+		if s.hasSOSAnchor {
 			s.done = true
 			break
 		}
+		if s.mustMatch {
+			break
+		}
 	}
 }
 
-func (s *Scanner) positiveCharGroup(group []byte) {
+func (s *Scanner) matchPositiveGroup(group []byte) {
 	for !s.isAtLineEnd() {
-		c := s.nextLineChar()
+		c := s.next()
 		if slices.Contains(group, c) {
 			s.ok = true
 			break
 		}
-	}
-}
-
-func (s *Scanner) matchExprGroup() {
-	group := s.seekInRegex(')')
-	exprs := strings.Split(string(group), "|")
-	newLine := s.line[s.lineCurrent:]
-
-	for _, expr := range exprs {
-		newScanner := NewScanner(newLine, expr)
-		newScanner.ScanTokens()
-		if newScanner.ok && newScanner.err == nil {
-			s.ok = true
-			s.lineCurrent += newScanner.lineCurrent
+		if s.hasSOSAnchor {
+			s.done = true
+			break
+		}
+		if s.mustMatch {
 			break
 		}
 	}
+}
+
+func (s *Scanner) matchNegativeGroup(group []byte) {
+	for !s.isAtLineEnd() {
+		if s.peek() == SPACE {
+			s.ok = false
+			break
+		}
+		c := s.next()
+		if !slices.Contains(group, c) {
+			s.ok = true
+			break
+		}
+		if s.hasSOSAnchor {
+			s.done = true
+			break
+		}
+		if s.mustMatch {
+			break
+		}
+	}
+}
+
+func (s *Scanner) matchExprGroup(exprs []string) {
+	newLine := s.line[s.lineCurrent:]
+
+	for _, expr := range exprs {
+		s.backRefs = append(s.backRefs, expr)
+		scanner := NewScanner(newLine, expr)
+		scanner.mustMatch = s.mustMatch
+		scanner.ScanTokens()
+		if scanner.ok {
+			s.ok = true
+			s.lineCurrent += scanner.lineCurrent
+			return
+		}
+	}
+	s.next()
 }
 
 func (s *Scanner) mustBeStart() {
 	s.ok = s.lineCurrent == 0
-	s.startAnchor = true
+	s.hasSOSAnchor = true
 	if !s.ok {
 		s.done = true
 	}
@@ -236,109 +201,95 @@ func (s *Scanner) mustBeStart() {
 func (s *Scanner) mustBeEnd() {
 	s.ok = s.ok && s.isAtLineEnd()
 	s.done = true
-	if !s.isAtRegexEnd() {
+}
+
+func (s *Scanner) matchOneOrMore() {
+	oldAnchor := s.hasSOSAnchor
+	s.hasSOSAnchor = false
+	for !s.isAtLineEnd() {
+		s.scanToken(s.prevToken)
+		if !s.ok {
+			s.lineCurrent--
+			break
+		}
 		s.ok = false
-		s.hasError = true
-		s.err = errors.New("regex not terminated by $")
 	}
+
+	s.ok = true
+	s.hasSOSAnchor = oldAnchor
+}
+
+func (s *Scanner) matchOptional() {
+	s.ok = false
+	s.scanToken(s.tokenizer.NextToken())
+	if !s.ok {
+		s.lineCurrent--
+	}
+	s.ok = true
+}
+
+func (s *Scanner) matchAny() {
+	s.next()
+	s.ok = s.mustMatch
+}
+
+func (s *Scanner) matchBackRef(idx int) {
+	expr := s.backRefs[len(s.backRefs)-int(idx)]
+	line := s.line[s.lineCurrent:]
+
+	scanner := NewScanner(line, expr)
+	scanner.hasSOSAnchor = s.mustMatch
+
+	scanner.ScanTokens()
+	s.ok = scanner.ok
+	s.lineCurrent += scanner.lineCurrent
 }
 
 // ----------------------------------------------------------------------------
 
 // Look aheads ----------------------------------------------------------------
 func (s *Scanner) lookForEOSAnchor() {
-	next := s.peekRegex()
-	if next == DOLLAR_SIGN {
-		s.scanToken()
+	if s.tokenizer.PeekToken() == nil {
+		return
+	}
+	next := s.tokenizer.PeekToken()
+	if next.typ == EOS_ANCHOR {
+		s.mustBeEnd()
+		s.tokenizer.NextToken()
 	}
 }
 
 func (s *Scanner) lookForOptional() {
-	next := s.peekNextRegex()
-	if next == QUESTION {
+	if s.tokenizer.PeekNextToken() == nil {
+		return
+	}
+	next := s.tokenizer.PeekNextToken()
+	if next.typ == OPTIONAL {
 		if s.ok {
-			if s.peekLine() == s.peekRegex() {
-				s.nextLineChar()
-			}
-			s.nextToken()
+			s.matchOptional()
+			s.tokenizer.NextToken()
 		}
 	}
 }
 
 // ----------------------------------------------------------------------------
 
-// Match helpers --------------------------------------------------------------
-func (s *Scanner) seekInRegex(expected byte) []byte {
-	group := make([]byte, 0)
-	for {
-		if s.isAtRegexEnd() {
-			s.hasError = true
-			str := fmt.Sprintf("unexpected end of regex, expected %v ", expected)
-			s.err = errors.New(str)
-		}
-		c := s.nextToken()
-		if c == expected {
-			break
-		}
-		group = append(group, c)
-	}
-	return group
-}
-
-func (s *Scanner) resetRegex() {
-	if s.isEscaping || s.startAnchor {
-		return
-	}
-	s.lineCurrent--
-	s.regexCurrent = 0
-	s.mustMatch = false
-}
-
-func (s *Scanner) peekRegex() byte {
-	if s.isAtRegexEnd() {
-		return '\000'
-	}
-	return s.regex[s.regexCurrent]
-}
-
-func (s *Scanner) peekNextRegex() byte {
-	if s.regexCurrent+1 >= len(s.regex) {
-		return '\000'
-	}
-	return s.regex[s.regexCurrent+1]
-}
-
-func (s *Scanner) peekLine() byte {
+// Locators -------------------------------------------------------------------
+func (s *Scanner) peek() byte {
 	if s.isAtLineEnd() {
 		return '\000'
 	}
 	return s.line[s.lineCurrent]
 }
 
-func (s *Scanner) prevToken() byte {
-	if s.regexCurrent == 0 {
-		return '\000'
-	}
-	return s.regex[s.regexCurrent-1]
-}
-
-func (s *Scanner) currentToken() byte {
-	return s.regex[s.regexCurrent]
-}
-
-func (s *Scanner) nextToken() byte {
-	s.regexCurrent++
-	return s.regex[s.regexCurrent-1]
-}
-
-func (s *Scanner) nextLineChar() byte {
+func (s *Scanner) next() byte {
 	s.lineCurrent++
 	return s.line[s.lineCurrent-1]
 }
 
 func (s *Scanner) isAtEnd() bool {
-	return s.regexCurrent >= len(s.regex) ||
-		s.lineCurrent >= len(s.line) ||
+	return s.lineCurrent >= len(s.line) ||
+		s.tokenizer.isAtEnd() ||
 		s.done ||
 		s.hasError
 }
@@ -347,25 +298,29 @@ func (s *Scanner) isAtLineEnd() bool {
 	return s.lineCurrent >= len(s.line)
 }
 
-func (s *Scanner) isAtRegexEnd() bool {
-	return s.regexCurrent >= len(s.regex)
-}
-
 // ----------------------------------------------------------------------------
 
 // Helpers --------------------------------------------------------------------
-func isDigit(c byte) bool {
-	return c >= '0' && c <= '9'
+func (s *Scanner) resetRegex() {
+	if s.hasSOSAnchor {
+		return
+	}
+	// s.lineCurrent--
+	s.tokenizer.resetTokens()
 }
 
-func isAlpha(c byte) bool {
-	return (c >= 'a' && c <= 'z') ||
-		(c >= 'A' && c <= 'Z') ||
-		c == '_'
+func (s *Scanner) Error(err string) {
+	s.hasError = true
+	s.err = errors.New(err)
 }
 
-func isAlphaNumeric(c byte) bool {
-	return isAlpha(c) || isDigit(c)
+func (s *Scanner) tokenizerOk() bool {
+	if !s.tokenizer.hasError {
+		return true
+	}
+	s.hasError = true
+	s.err = s.tokenizer.err
+	return false
 }
 
 // ----------------------------------------------------------------------------
