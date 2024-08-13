@@ -10,6 +10,7 @@ type Scanner struct {
 	prevToken   *Token
 	line        string
 	lineCurrent int
+	matchStart  int
 	err         error
 	backRefs    []string
 
@@ -37,14 +38,14 @@ func (s *Scanner) ScanTokens() {
 	for !s.isAtEnd() {
 		s.ok = false
 
+		if !s.mustMatch {
+			s.matchStart = s.lineCurrent
+		}
+
 		token := s.tokenizer.NextToken()
 		s.scanToken(token)
 
-		if s.ok {
-			s.mustMatch = true
-		} else if s.mustMatch {
-			s.resetRegex()
-		}
+		s.checkScannerState()
 
 		s.prevToken = token
 		s.lookForEOSAnchor()
@@ -177,12 +178,12 @@ func (s *Scanner) matchExprGroup(exprs []string) {
 	newLine := s.line[s.lineCurrent:]
 
 	for _, expr := range exprs {
-		s.backRefs = append(s.backRefs, expr)
 		scanner := NewScanner(newLine, expr)
 		scanner.mustMatch = s.mustMatch
 		scanner.ScanTokens()
 		if scanner.ok {
 			s.ok = true
+			s.backRefs = append(s.backRefs, scanner.line[scanner.matchStart:scanner.lineCurrent])
 			s.lineCurrent += scanner.lineCurrent
 			return
 		}
@@ -234,7 +235,10 @@ func (s *Scanner) matchAny() {
 }
 
 func (s *Scanner) matchBackRef(idx int) {
-	expr := s.backRefs[len(s.backRefs)-int(idx)]
+	if idx-1 >= len(s.backRefs) {
+		return
+	}
+	expr := s.backRefs[idx-1]
 	line := s.line[s.lineCurrent:]
 
 	scanner := NewScanner(line, expr)
@@ -305,8 +309,16 @@ func (s *Scanner) resetRegex() {
 	if s.hasSOSAnchor {
 		return
 	}
-	// s.lineCurrent--
+	s.matchStart = s.lineCurrent
 	s.tokenizer.resetTokens()
+}
+
+func (s *Scanner) checkScannerState() {
+	if s.ok {
+		s.mustMatch = true
+	} else if s.mustMatch {
+		s.resetRegex()
+	}
 }
 
 func (s *Scanner) Error(err string) {

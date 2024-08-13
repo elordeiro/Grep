@@ -39,8 +39,6 @@ func main() {
 		fmt.Println("not found")
 		os.Exit(1)
 	}
-
-	fmt.Println("found")
 }
 
 func matchLine(line []byte, pattern string) (bool, error) {
@@ -51,6 +49,10 @@ func matchLine(line []byte, pattern string) (bool, error) {
 	scanner := NewScanner(string(line), pattern)
 
 	scanner.ScanTokens()
+
+	if scanner.ok {
+		fmt.Println("found", scanner.line[scanner.matchStart:scanner.lineCurrent])
+	}
 
 	return scanner.ok, scanner.err
 }
