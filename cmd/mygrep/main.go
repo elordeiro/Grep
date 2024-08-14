@@ -8,6 +8,9 @@ import (
 	"unicode/utf8"
 )
 
+var LINE = "abc-def is abc-def, not xyz"
+var PATTERN = "([abc]+)-([def]+) is \\1-\\2, not [^xyz]"
+
 /*
 Usage: echo <input_text> | your_program.sh -E <pattern>
 Exit codes:
@@ -18,6 +21,17 @@ Exit codes:
 func main() {
 	if len(os.Args) < 3 || os.Args[1] != "-E" {
 		fmt.Fprintf(os.Stderr, "usage: mygrep -E <pattern>\n")
+		// Test the program
+		line := []byte(LINE)
+		pattern := PATTERN
+		ok, err := matchLine(line, pattern)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(2)
+		}
+		if !ok {
+			os.Exit(1)
+		}
 		os.Exit(2)
 	}
 
@@ -36,7 +50,6 @@ func main() {
 	}
 
 	if !ok {
-		fmt.Println("not found")
 		os.Exit(1)
 	}
 }
@@ -46,13 +59,10 @@ func matchLine(line []byte, pattern string) (bool, error) {
 		return false, fmt.Errorf("unsupported pattern: %q", pattern)
 	}
 
-	scanner := NewScanner(string(line), pattern)
-
-	scanner.ScanTokens()
-
-	if scanner.ok {
-		fmt.Println("found", scanner.line[scanner.matchStart:scanner.lineCurrent])
+	grep := NewGrep()
+	ok, err := grep.Run(string(line), pattern)
+	if err != nil {
+		return false, err
 	}
-
-	return scanner.ok, scanner.err
+	return ok, nil
 }
