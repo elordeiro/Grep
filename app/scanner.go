@@ -1,4 +1,4 @@
-package main
+package grep
 
 type Scanner struct {
 	regex   string

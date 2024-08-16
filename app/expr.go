@@ -1,4 +1,4 @@
-package main
+package grep
 
 type Expr interface {
 	accept(v Visitor) bool

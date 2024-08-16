@@ -1,4 +1,4 @@
-package main
+package grep
 
 // Helpers --------------------------------------------------------------------
 func isDigit(c byte) bool {

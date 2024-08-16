@@ -59,7 +59,7 @@ func matchLine(line []byte, pattern string) (bool, error) {
 		return false, fmt.Errorf("unsupported pattern: %q", pattern)
 	}
 
-	grep := NewGrep()
+	grep := grep.NewGrep()
 	ok, err := grep.Run(string(line), pattern)
 	if err != nil {
 		return false, err
