@@ -1,3 +1,3 @@
-module github.com/elordeiro/Grep/app
+module github.com/elordeiro/Grep
 
 go 1.22
