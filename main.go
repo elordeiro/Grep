@@ -7,7 +7,7 @@ import (
 
 	"unicode/utf8"
 
-	grep "github.com/elordeiro/Grep/app"
+	grep "github.com/elordeiro/grep/app"
 )
 
 var LINE = "abc-def is abc-def, not xyz"
